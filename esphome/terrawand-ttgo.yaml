@@ -1,0 +1,237 @@
+esphome:
+  name: "terrawand"
+  includes:
+    - uart_reader.h
+
+esp32:
+  board: featheresp32
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  password: ""
+
+ota:
+  password: ""
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_pw
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Entryway Fallback Hotspot"
+    password: !secret wifi_pw
+
+captive_portal:
+
+time:
+- platform: sntp
+  id: sntp_time
+
+mqtt:
+  broker: provolotnas.local
+  username: cumulusclouds 
+  password: !secret mqtt_pw
+
+  on_message:
+  - topic: "/terrawand1/ping"
+    then:
+      - mqtt.publish:
+          topic: "/terrawand1/status"
+          payload: display_message
+          qos: 1
+
+uart:
+  id: uart_bus
+  tx_pin: GPIO25
+  rx_pin: GPIO26
+  baud_rate: 9600
+  debug:
+    direction: BOTH
+    dummy_receiver: false
+    after:
+      delimiter: "\n"
+    sequence:
+      - lambda: UARTDebug::log_string(direction, bytes);
+
+
+
+# Define the custom UART reader component
+text_sensor:
+- platform: custom
+  lambda: |-
+    auto my_uart_reader = new UARTReader(id(uart_bus));
+    App.register_component(my_uart_reader);
+    return {my_uart_reader};
+  text_sensors:
+    id: "uart_readline"
+
+
+switch:
+  - platform: template
+    name: "Switch"
+    lambda: |-
+      if (id(uart_readline).state == "%(print)%") {
+        return true;
+      } else {
+        return false;
+      } 
+    turn_on_action:
+      - uart.write: "\r*pow=on#\r"
+    turn_off_action:
+      - uart.write: "\r*pow=off#\r"
+
+interval:
+  - interval: 10s
+    then:
+       - uart.write: [0x7E, 0x00, 0x08, 0x01, 0x00, 0x02, 0x01, 0xAB, 0xCD]
+
+button:
+  - platform: uart
+    name: "Scan Barcode"
+    id: scan_barcode
+    data: [0x7E, 0x00, 0x08, 0x01, 0x00, 0x02, 0x01, 0xAB, 0xCD]
+
+globals:
+  - id: display_message
+    type: std::string
+    initial_value: '"Hello!"'
+  - id: message_color
+    type: Color
+    initial_value: 'Color(255, 255, 255)'
+  - id: sensor_on
+    type: bool
+    initial_value: 'false'
+  - id: start_time
+    type: uint32_t
+    initial_value: '0'
+
+light:
+  - platform: binary
+    id: yellow_led
+    name: "Yellow LED"
+    output: yellow_led_output
+
+output:
+  - id: yellow_led_output
+    platform: gpio
+    pin: GPIO33
+
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO32
+      inverted: true
+      mode: INPUT_PULLUP
+    name: "Countdown Timer"
+    id: countdown_timer
+    filters:
+      - delayed_on_off: 0.3s
+    on_press:
+      then:
+        - uart.write: 
+            id: uart_bus
+            data: [0x7E, 0x00, 0x08, 0x01, 0x00, 0x02, 0x01, 0xAB, 0xCD]
+        - lambda: |-
+            char time_str[30];
+            auto time = id(sntp_time).now(); // Get current time
+            id(start_time) = id(sntp_time).now().timestamp;
+            id(sensor_on) = true;
+            sprintf(time_str, "TIMER ON FOR: %02d:%02d:%02d", time.hour, time.minute, time.second);
+            id(display_message) = std::string(time_str);
+            id(message_color) = Color(0, 255, 0); // Change color to red
+            id(my_display).update();
+        - mqtt.publish:
+            topic: "/terrawand1/status"
+            payload: "started"
+            qos: 1
+        - light.turn_on:
+            id: yellow_led
+            brightness: 100%
+    on_release:
+      then:
+        - lambda: |-
+            char time_str[30];
+            auto time = id(sntp_time).now(); // Get current time
+            sprintf(time_str, "TIMER STOPPED"); //#: %02d:%02d:%02d", time.hour, time.minute, time.second);
+            id(sensor_on) = false;
+            id(display_message) = std::string(time_str);
+            id(message_color) = Color(255, 0, 0); // Change color to red
+            id(my_display).update();
+        - mqtt.publish:
+            topic: "/terrawand1/status"
+            payload: "stopped"
+            qos: 1
+        - light.turn_off:
+            id: yellow_led
+
+spi:
+  clk_pin: GPIO18
+  mosi_pin: GPIO19
+
+display:
+  - platform: st7789v
+    id: my_display
+    model: TTGO TDisplay 135x240
+    backlight_pin: GPIO4
+    cs_pin: GPIO5
+    dc_pin: GPIO16
+    reset_pin: GPIO23
+    rotation: 270
+    update_interval: 0.9s
+    lambda: |-
+      if(id(sensor_on)) {
+        auto now = id(sntp_time).now();
+        if (now.is_valid()) {
+          uint32_t current_time = now.timestamp;
+          uint32_t duration = current_time - id(start_time);
+          int hours = duration / 3600;
+          int minutes = (duration % 3600) / 60;
+          int seconds = duration % 60;
+          it.printf((240/2), 10, id(roboto_30), id(my_green), TextAlign::TOP_CENTER, "ON for %02d:%02d:%02d", hours, minutes, seconds);
+        }
+      } else {
+          it.printf((240/2), 10, id(roboto_30), id(my_gray), TextAlign::TOP_CENTER, "OFF");
+      }
+
+      it.strftime((240 / 2), (140 / 3) * 2 + 5, id(roboto_30), id(my_gray), TextAlign::CENTER, "%H:%M:%S", id(sntp_time).now());
+      it.rectangle(0,  0, it.get_width(), it.get_height(), id(my_blue));
+
+color:
+  - id: my_red
+    red: 100%
+    green: 0%
+    blue: 0%
+  - id: my_yellow
+    red: 100%
+    green: 100%
+    blue: 0%
+  - id: my_green
+    red: 0%
+    green: 100%
+    blue: 0%
+  - id: my_blue
+    red: 0%
+    green: 0%
+    blue: 100%
+  - id: my_gray
+    red: 50%
+    green: 50%
+    blue: 50%
+
+font:
+  - file: "gfonts://Roboto"
+    id: roboto_20
+    size: 20
+  - file: "gfonts://Roboto"
+    id: roboto_30
+    size: 30 
+  - file: "gfonts://Roboto"
+    id: roboto_48
+    size: 48 
+
