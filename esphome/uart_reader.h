@@ -12,23 +12,38 @@ class UARTReader : public Component, public UARTDevice, public TextSensor {
         void setup() override {
         // nothing to do here
         }
-        void loop() override {
-            while (available()) {
-              char c = read();
-              this->uart_buffer[offset++] = c;
-              if (offset > BUFFER_LEN - 1) {
-                offset = 0;
-                break;
-              }
-              if (c == '\r') {
-                this->uart_buffer[offset] = '\0';
-                ESP_LOGD("BARCODE READ", "[%d] %s", offset, this->uart_buffer);
-                publish_state(this->uart_buffer);
-                offset = 0;
-                break;
-              }
 
+        int readline(int readch, char *buffer, int len) {
+          static int pos = 0;
+          int rpos;
+
+          if (readch > 0) {
+            switch (readch) {
+              case '\n': // Ignore new-lines
+                break;
+              case '\r': // Return on CR
+                rpos = pos;
+                pos = 0;  // Reset position index ready for next time
+                return rpos;
+              default:
+                if (pos < len-1) {
+                  buffer[pos++] = readch;
+                  buffer[pos] = 0;
+                }
             }
+          }
+          // No end of line has been found, so return -1.
+          return -1;
+        }
+
+        void loop() override {
+          const int max_line_length = 180;
+          static char buffer[max_line_length];
+          while (available()) {
+            if(readline(read(), buffer, max_line_length) > 0) {
+              publish_state(buffer);
+            }
+          }
         }
 };
 
