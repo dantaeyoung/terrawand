@@ -39,10 +39,10 @@ mqtt:
   password: !secret mqtt_pw
 
   on_message:
-  - topic: "/terrawand1/ping"
+  - topic: "terrawand1/ping"
     then:
       - mqtt.publish:
-          topic: "/terrawand1/status"
+          topic: "terrawand1/status"
           payload: display_message
           qos: 1
 
@@ -69,14 +69,21 @@ text_sensor:
     App.register_component(my_uart_reader);
     return {my_uart_reader};
   text_sensors:
-    id: "uart_readline"
+    - name: "Barcode Scanner"
+      id: "barcode_scanner"
+      on_value:
+        then:
+          - mqtt.publish:
+              topic: "terrawand1/scan"
+              payload: !lambda 'return x;'
+              qos: 1
 
 
 switch:
   - platform: template
     name: "Switch"
     lambda: |-
-      if (id(uart_readline).state == "%(print)%") {
+      if (id(barcode_scanner).state == "%(print)%") {
         return true;
       } else {
         return false;
@@ -147,7 +154,7 @@ binary_sensor:
             id(message_color) = Color(0, 255, 0); // Change color to red
             id(my_display).update();
         - mqtt.publish:
-            topic: "/terrawand1/status"
+            topic: "terrawand1/status"
             payload: "started"
             qos: 1
         - light.turn_on:
@@ -164,7 +171,7 @@ binary_sensor:
             id(message_color) = Color(255, 0, 0); // Change color to red
             id(my_display).update();
         - mqtt.publish:
-            topic: "/terrawand1/status"
+            topic: "terrawand1/status"
             payload: "stopped"
             qos: 1
         - light.turn_off:
