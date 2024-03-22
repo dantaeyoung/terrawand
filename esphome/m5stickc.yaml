@@ -1,0 +1,368 @@
+# https://docs.m5stack.com/en/core/m5stickc_plus
+
+
+substitutions:
+  device_id: "1"
+  devicetype: "m5stick_cplus"
+  devicename: "m5stick-${device_id}"
+  friendly_devicename: "M5Stick CPlus ${device_id}"
+
+esphome:
+  name: $devicename
+  comment: $friendly_devicename
+  platformio_options:
+    upload_speed: 115200
+  includes:
+    - uart_reader.h
+  on_boot:
+    priority: 800
+    then:
+      - delay: 3s
+      - component.update: tft_display
+
+# https://esphome.io/components/esp32.html
+esp32:
+  # https://registry.platformio.org/platforms/platformio/espressif32/boards
+  # https://docs.platformio.org/en/latest/boards/espressif32/m5stick-c.html
+  board: m5stick-c
+  framework:
+    type: arduino
+
+# https://esphome.io/components/wifi.html
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_pw
+  fast_connect: true
+
+# https://esphome.io/components/logger.html
+logger:
+  # DEBUG is default level
+  level: VERBOSE
+  #level: DEBUG
+  # level: INFO
+
+# Generic API component (for Home Assistant)
+# https://esphome.io/components/api.html
+api:
+  password: ""
+
+# Over-The-Air (OTA) firmware updates
+# https://esphome.io/components/ota.html
+ota:
+  password: ""
+  #on_begin:
+  #  then:
+  #    - logger.log: "OTA start"
+  #on_progress:
+  #  then:
+  #    - logger.log:
+  #        format: "OTA progress %0.1f%%"
+  #        args: ["x"]
+  #on_end:
+  #  then:
+  #    - logger.log: "OTA end"
+  #on_error:
+  #  then:
+  #    - logger.log:
+  #        format: "OTA update error %d"
+  #        args: ["x"]
+
+# Hardware
+binary_sensor:
+  # Buttom button: Turn display on and off
+  - platform: gpio
+    pin:
+      number: GPIO39
+      inverted: true
+    name: ${friendly_devicename} Button B
+    on_press:
+      then:
+        - display.page.show_next: tft_display
+        - component.update: tft_display
+        
+  # Front/Main: Make it available for home assistant usage
+  - platform: gpio
+    pin:
+      number: GPIO37
+      inverted: true
+    name: ${friendly_devicename} Button A
+    on_press:
+      then:
+        - light.turn_on: led1
+        - mqtt.publish:
+            topic: "m5stickc1/button"
+            payload: "pressed"
+            qos: 1
+    on_release:
+      then:
+        - light.turn_off: led1
+
+## ruuvi tag needs esp32 ble
+#esp32_ble_tracker:
+#ruuvi_ble:
+
+sensor:
+  # AXP192 power management unit (PMU) - must be present to initialize TFT power on
+  - platform: axp192
+    id: pmu
+    address: 0x34
+    i2c_id: bus_a
+    update_interval: 30s
+
+    # Battery sensor
+    battery_level:
+      name: ${friendly_devicename} Battery Level
+      id: m5stick_batterylevel
+    brightness: 0.5
+
+  - platform: wifi_signal
+    name: ${friendly_devicename} WiFi Signal
+    id: wifi_dbm
+
+  - platform: uptime
+    name: ${friendly_devicename} Uptime
+
+#  - platform: ruuvitag
+#    mac_address: F6:56:A2:49:5C:F5
+#    humidity:
+#      name: "RuuviTag Humidity"
+#    temperature:
+#      name: "RuuviTag Temperature"
+#    pressure:
+#      name: "RuuviTag Pressure"
+#    acceleration:
+#      name: "RuuviTag Acceleration"
+#    acceleration_x:
+#      name: "RuuviTag Acceleration X"
+#    acceleration_y:
+#      name: "RuuviTag Acceleration Y"
+#    acceleration_z:
+#      name: "RuuviTag Acceleration Z"
+#    battery_voltage:
+#      name: "RuuviTag Battery Voltage"
+#    tx_power:
+#      name: "RuuviTag TX Power"
+#    movement_counter:
+#      name: "RuuviTag Movement Counter"
+#    measurement_sequence_number:
+#      name: "RuuviTag Measurement Sequence Number"
+#
+#  - platform: ruuvitag
+#    mac_address: F6:56:A2:49:5C:F5
+#    humidity:
+#      name: "RuuviTag Humidity"
+#    temperature:
+#      name: "RuuviTag Temperature"
+#    pressure:
+#      name: "RuuviTag Pressure"
+#    acceleration:
+#      name: "RuuviTag Acceleration"
+#    acceleration_x:
+#      name: "RuuviTag Acceleration X"
+#    acceleration_y:
+#      name: "RuuviTag Acceleration Y"
+#    acceleration_z:
+#      name: "RuuviTag Acceleration Z"
+#    battery_voltage:
+#      name: "RuuviTag Battery Voltage"
+#    tx_power:
+#      name: "RuuviTag TX Power"
+#    movement_counter:
+#      name: "RuuviTag Movement Counter"
+#    measurement_sequence_number:
+#      name: "RuuviTag Measurement Sequence Number"
+#
+#  - platform: ruuvitag
+#    mac_address: F6:56:A2:49:5C:F5
+#    humidity:
+#      name: "RuuviTag Humidity"
+#    temperature:
+#      name: "RuuviTag Temperature"
+#    pressure:
+#      name: "RuuviTag Pressure"
+#    acceleration:
+#      name: "RuuviTag Acceleration"
+#    acceleration_x:
+#      name: "RuuviTag Acceleration X"
+#    acceleration_y:
+#      name: "RuuviTag Acceleration Y"
+#    acceleration_z:
+#      name: "RuuviTag Acceleration Z"
+#    battery_voltage:
+#      name: "RuuviTag Battery Voltage"
+#    tx_power:
+#      name: "RuuviTag TX Power"
+#    movement_counter:
+#      name: "RuuviTag Movement Counter"
+#    measurement_sequence_number:
+#      name: "RuuviTag Measurement Sequence Number"
+
+# Make builtin led available
+# https://esphome.io/components/output/ledc.html
+output:
+  - platform: ledc
+    id: builtin_led
+    pin: 10
+    inverted: true
+
+# Expose led output for Home Assistant as monochrome light
+# https://esphome.io/components/light/monochromatic.html
+light:
+  - platform: monochromatic
+    id: led1
+    output:  builtin_led
+    name: ${friendly_devicename} Led
+
+# internal IR transmitter
+# https://esphome.io/components/remote_transmitter.html
+#remote_transmitter:
+#  pin: GPIO9
+  # IR Led
+  #  carrier_duty_percent: 50%
+
+# https://esphome.io/components/time.html
+# Get it from homeassistant for convenience
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+  - platform: sntp
+    id: sntp_time
+
+mqtt:
+  broker: !secret mqtt_host
+  username: !secret mqtt_username
+  password: !secret mqtt_pw
+
+  on_message:
+  - topic: "m5stickc1/ping"
+    then:
+      - mqtt.publish:
+          topic: "m5stickc1/status"
+          payload: display_message
+          qos: 1
+
+
+
+
+# https://esphome.io/components/i2c.html
+i2c:
+- id: bus_a
+   # Internal/system i2c bus
+  sda: GPIO21
+  scl: GPIO22
+   # - id: bus_b 
+   # external/second i2c bus
+   #  sda: GPIO0
+   #scl: GPIO26
+
+uart:
+  id: uart_bus
+  tx_pin: GPIO25
+  rx_pin: GPIO26
+  baud_rate: 9600
+  debug:
+    direction: BOTH
+    dummy_receiver: false
+    after:
+      delimiter: "\n"
+    sequence:
+      - lambda: UARTDebug::log_string(direction, bytes);
+
+# Define the custom UART reader component
+text_sensor:
+- platform: custom
+  lambda: |-
+    auto my_uart_reader = new UARTReader(id(uart_bus));
+    App.register_component(my_uart_reader);
+    return {my_uart_reader};
+  text_sensors:
+    - name: "Barcode Scanner"
+      id: "barcode_scanner"
+
+
+  # https://esphome.io/components/spi.html
+spi:
+  clk_pin: GPIO13
+  mosi_pin: GPIO15
+
+# https://esphome.io/components/display/index.html#fonts
+font:
+  - file: "gfonts://Roboto"
+    id: font1
+    size: 20
+  - file: "gfonts://Roboto"
+    id: font12
+    size: 12
+  - file: "gfonts://Roboto"
+    id: font24
+    size: 24
+  - file: "gfonts://Roboto"
+    id: font36
+    size: 36
+
+# - Display configuration and management ---------------------------------------
+# Colors
+color:
+  - id: red
+    red: 100%
+    green: 0%
+    blue: 0%
+  - id: green
+    red: 0%
+    green: 100%
+    blue: 0%
+  - id: blue
+    red: 0%
+    green: 0%
+    blue: 100%
+  - id: gray
+    red: 50%
+    green: 50%
+    blue: 50%
+  - id: white
+    red: 100%
+    green: 100%
+    blue: 100%
+
+# 135x240 TFT LCD
+display:
+  - platform: st7789v
+    id: tft_display
+    cs_pin: GPIO5
+    dc_pin: GPIO23
+    reset_pin: GPIO18
+    rotation: 90
+    model: TTGO TDISPLAY 135X240
+    pages:
+      - id: page1
+        lambda: |-
+          float brightness=0.5;
+          auto maxwidth = it.get_width();
+          auto maxheight = it.get_height();
+    
+          it.printf(0, 0, id(font12), gray, TextAlign::TOP_LEFT, "Battery: %.0f %%", id(m5stick_batterylevel).state);
+          it.strftime(maxwidth, 0, id(font12), gray, TextAlign::TOP_RIGHT, "%Y-%m-%d %H:%M", id(sntp_time).now());
+   
+          it.printf(0, 12, id(font12), white, TextAlign::TOP_LEFT, "MAC: %s", WiFi.macAddress().c_str());
+          if ((WiFi.status() == WL_CONNECTED)) {
+            it.printf(0, 24, id(font12), white, TextAlign::TOP_LEFT, "SSID: %s", WiFi.SSID().c_str());
+            it.printf(0, 36, id(font12), white, TextAlign::TOP_LEFT, "IP: %s", WiFi.localIP().toString().c_str());
+          }
+          it.printf(120, 68, id(font24), blue, TextAlign::CENTER, "${friendly_devicename}");
+    
+          if (id(wifi_dbm).has_state()) {
+            char str[128];
+            sprintf(str, "%.0f dBm", id(wifi_dbm).state);
+            it.printf(maxwidth, maxheight, id(font12), green, TextAlign::BOTTOM_RIGHT, str);
+          } else {
+            it.printf(maxwidth, maxheight, id(font12), red, TextAlign::BOTTOM_RIGHT, "No Wifi");
+          }
+    
+          // Update display brightness
+          id(pmu).set_brightness(brightness);
+          id(pmu).update();
+      - id: page2
+        lambda: |-
+          float brightness=0.0;
+          id(pmu).set_brightness(brightness);
+          id(pmu).update();
