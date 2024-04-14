@@ -46,63 +46,6 @@ mqtt:
           payload: display_message
           qos: 1
 
-uart:
-  id: uart_bus
-  tx_pin: GPIO25
-  rx_pin: GPIO26
-  baud_rate: 9600
-  debug:
-    direction: BOTH
-    dummy_receiver: false
-    after:
-      delimiter: "\n"
-    sequence:
-      - lambda: UARTDebug::log_string(direction, bytes);
-
-
-
-# Define the custom UART reader component
-text_sensor:
-- platform: custom
-  lambda: |-
-    auto my_uart_reader = new UARTReader(id(uart_bus));
-    App.register_component(my_uart_reader);
-    return {my_uart_reader};
-  text_sensors:
-    - name: "Barcode Scanner"
-      id: "barcode_scanner"
-      on_value:
-        then:
-          - mqtt.publish:
-              topic: "terrawand1/scan"
-              payload: !lambda 'return x;'
-              qos: 1
-
-
-switch:
-  - platform: template
-    name: "Switch"
-    lambda: |-
-      if (id(barcode_scanner).state == "%(print)%") {
-        return true;
-      } else {
-        return false;
-      } 
-    turn_on_action:
-      - uart.write: "\r*pow=on#\r"
-    turn_off_action:
-      - uart.write: "\r*pow=off#\r"
-
-interval:
-  - interval: 10s
-    then:
-       - uart.write: [0x7E, 0x00, 0x08, 0x01, 0x00, 0x02, 0x01, 0xAB, 0xCD]
-
-button:
-  - platform: uart
-    name: "Scan Barcode"
-    id: scan_barcode
-    data: [0x7E, 0x00, 0x08, 0x01, 0x00, 0x02, 0x01, 0xAB, 0xCD]
 
 globals:
   - id: display_message
@@ -118,6 +61,90 @@ globals:
     type: uint32_t
     initial_value: '0'
 
+
+uart:
+  id: uart_bus
+  tx_pin: GPIO25
+  rx_pin: GPIO26
+  baud_rate: 9600
+  debug:
+    direction: BOTH
+    dummy_receiver: false
+    after:
+      delimiter: "\n"
+    sequence:
+      - lambda: UARTDebug::log_string(direction, bytes);
+
+
+  #0x02, 0x00, 0x00, 0x01, 0x00, 0x33, 0x31
+
+# Define the custom UART reader component
+text_sensor:
+- platform: custom
+  lambda: |-
+    auto my_uart_reader = new UARTReader(id(uart_bus));
+    App.register_component(my_uart_reader);
+    return {my_uart_reader};
+  text_sensors:
+    - name: "Barcode Scanner"
+      id: "barcode_scanner"
+      filters:
+        - lambda: |-
+              //ESP_LOGD("custom", "%s", format_hex_pretty((uint8_t *) x.c_str(), x.size()).c_str());
+
+              if (x.size() >= 7 && x[0] == 0x02 && x[1] == 0x00 && x[2] == 0x00 && x[3] == 0x01 && x[4] == 0x00 && x[5] == 0x33 && x[6] == 0x31) {
+                // ignore response sequence from barcode scanner
+                x = x.substr(7); 
+                //ESP_LOGD("custom", "CUT DOWN 7");
+              }
+              if (x.size() >= 4 && x[0] == 0x02 && x[1] == 0x01 && x[2] == 0x33 && x[3] == 0x31) {
+                // ignore response sequence from barcode scanner
+                x = x.substr(4); 
+                //ESP_LOGD("custom", "CUT DOWN 4");
+              }
+              return x;
+
+      on_value:
+        then:
+          - lambda: |-
+              id(display_message) =  x;
+              id(my_display).update();
+
+
+              
+          - logger.log: "Hello World SCANN"
+              
+          - mqtt.publish:
+              topic: "terrawand1/scan"
+              payload: !lambda 'return x;'
+              qos: 1
+       
+switch:
+  - platform: template
+    name: "Switch"
+    lambda: |-
+      if (id(barcode_scanner).state == "%(print)%") {
+        return true;
+      } else {
+        return false;
+      } 
+    turn_on_action:
+      - uart.write: "\r*pow=on#\r"
+    turn_off_action:
+      - uart.write: "\r*pow=off#\r"
+
+  #interval:
+  #  - interval: 10s
+  #  then:
+  #     - uart.write: [0x7E, 0x00, 0x08, 0x01, 0x00, 0x02, 0x01, 0xAB, 0xCD]
+
+button:
+  - platform: uart
+    name: "Scan Barcode"
+    id: scan_barcode
+    data: [0x7E, 0x00, 0x08, 0x01, 0x00, 0x02, 0x01, 0xAB, 0xCD]
+
+
 light:
   - platform: binary
     id: yellow_led
@@ -128,54 +155,6 @@ output:
   - id: yellow_led_output
     platform: gpio
     pin: GPIO33
-
-binary_sensor:
-  - platform: gpio
-    pin:
-      number: GPIO32
-      inverted: true
-      mode: INPUT_PULLUP
-    name: "Countdown Timer"
-    id: countdown_timer
-    filters:
-      - delayed_on_off: 0.3s
-    on_press:
-      then:
-        - uart.write: 
-            id: uart_bus
-            data: [0x7E, 0x00, 0x08, 0x01, 0x00, 0x02, 0x01, 0xAB, 0xCD]
-        - lambda: |-
-            char time_str[30];
-            auto time = id(sntp_time).now(); // Get current time
-            id(start_time) = id(sntp_time).now().timestamp;
-            id(sensor_on) = true;
-            sprintf(time_str, "TIMER ON FOR: %02d:%02d:%02d", time.hour, time.minute, time.second);
-            id(display_message) = std::string(time_str);
-            id(message_color) = Color(0, 255, 0); // Change color to red
-            id(my_display).update();
-        - mqtt.publish:
-            topic: "terrawand1/status"
-            payload: "started"
-            qos: 1
-        - light.turn_on:
-            id: yellow_led
-            brightness: 100%
-    on_release:
-      then:
-        - lambda: |-
-            char time_str[30];
-            auto time = id(sntp_time).now(); // Get current time
-            sprintf(time_str, "TIMER STOPPED"); //#: %02d:%02d:%02d", time.hour, time.minute, time.second);
-            id(sensor_on) = false;
-            id(display_message) = std::string(time_str);
-            id(message_color) = Color(255, 0, 0); // Change color to red
-            id(my_display).update();
-        - mqtt.publish:
-            topic: "terrawand1/status"
-            payload: "stopped"
-            qos: 1
-        - light.turn_off:
-            id: yellow_led
 
 spi:
   clk_pin: GPIO18
@@ -192,22 +171,8 @@ display:
     rotation: 270
     update_interval: 0.9s
     lambda: |-
-      if(id(sensor_on)) {
-        auto now = id(sntp_time).now();
-        if (now.is_valid()) {
-          uint32_t current_time = now.timestamp;
-          uint32_t duration = current_time - id(start_time);
-          int hours = duration / 3600;
-          int minutes = (duration % 3600) / 60;
-          int seconds = duration % 60;
-          it.printf((240/2), 10, id(roboto_30), id(my_green), TextAlign::TOP_CENTER, "ON for %02d:%02d:%02d", hours, minutes, seconds);
-        }
-      } else {
-          it.printf((240/2), 10, id(roboto_30), id(my_gray), TextAlign::TOP_CENTER, "OFF");
-      }
-
-      it.strftime((240 / 2), (140 / 3) * 2 + 5, id(roboto_30), id(my_gray), TextAlign::CENTER, "%H:%M:%S", id(sntp_time).now());
-      it.rectangle(0,  0, it.get_width(), it.get_height(), id(my_blue));
+      it.printf(10, 10, id(roboto_20), id(my_red), TextAlign::TOP_LEFT, "scan: %s", id(display_message).c_str());
+      it.strftime(10, 40, id(roboto_20), "%Y-%m-%d %H:%M", id(sntp_time).now());
 
 color:
   - id: my_red
