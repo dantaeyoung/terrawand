@@ -110,7 +110,6 @@ text_sensor:
               id(display_message) =  x;
               id(my_display).update();
 
-
               
           - logger.log: "Hello World SCANN"
               
@@ -118,7 +117,15 @@ text_sensor:
               topic: "terrawand1/scan"
               payload: !lambda 'return x;'
               qos: 1
-       
+  
+
+
+- platform: mqtt_subscribe
+  name: "Terrawand Inbox"
+  id: terrawand_inbox
+  topic: "terrawand1/inbox"
+
+
 switch:
   - platform: template
     name: "Switch"
@@ -173,6 +180,7 @@ display:
     lambda: |-
       it.printf(10, 10, id(roboto_20), id(my_red), TextAlign::TOP_LEFT, "scan: %s", id(display_message).c_str());
       it.strftime(10, 40, id(roboto_20), "%Y-%m-%d %H:%M", id(sntp_time).now());
+      it.printf(10, 70, id(roboto_20), id(my_green), TextAlign::TOP_LEFT, " %s", id(terrawand_inbox).state.c_str());
 
 color:
   - id: my_red
